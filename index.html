@@ -12,19 +12,23 @@
     body, html {
       width: 100%;
       height: 100%;
-      overflow: hidden; /* 画面のスクロール・バウンス防止 */
+      overflow: hidden;
       background-color: #ffffff;
-      touch-action: none; /* 指やPencilでの画面ズーム・スクロールを無効化 */
+      touch-action: none;
     }
     canvas {
       display: block;
       width: 100%;
       height: 100%;
     }
-    #clearBtn {
+    .toolbar {
       position: fixed;
       top: 20px;
       right: 20px;
+      display: flex;
+      gap: 10px;
+    }
+    .tool-btn {
       width: 48px;
       height: 48px;
       border-radius: 50%;
@@ -33,63 +37,138 @@
       backdrop-filter: blur(8px);
       font-size: 20px;
       cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .tool-btn:disabled {
+      opacity: 0.3;
+      cursor: default;
     }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
-  <button id="clearBtn" aria-label="全消去">🗑️</button>
+  
+  <div class="toolbar">
+    <button id="undoBtn" class="tool-btn" aria-label="戻る" disabled>↩</button>
+    <button id="redoBtn" class="tool-btn" aria-label="進む" disabled>↪</button>
+    <button id="clearBtn" class="tool-btn" aria-label="全消去">🗑️</button>
+  </div>
 
   <script>
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
     const clearBtn = document.getElementById('clearBtn');
 
-    // iPadのRetinaディスプレイで線がボヤけないように解像度を調整
+    // 履歴管理用の配列（最大30手前まで保存）
+    let history = [];
+    let historyStep = -1;
+    const MAX_HISTORY = 30;
+
+    function setPenStyle() {
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 10; // ← ペンの太さを変える場合はここを変更
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }
+
     function resizeCanvas() {
+      // リサイズ前に現在の絵を一時保存
+      const tempImage = canvas.width > 0 ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
       const dpr = window.devicePixelRatio || 1;
       canvas.width = window.innerWidth * dpr;
       canvas.height = window.innerHeight * dpr;
       ctx.scale(dpr, dpr);
-      
-      // ペンの設定（太さ一定の黒ペン）
-      ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 10;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+      setPenStyle();
+      if (tempImage) {
+        ctx.putImageData(tempImage, 0, 0);
+      }
     }
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
+    // 現在のキャンバス状態を履歴に保存
+    function saveState() {
+      historyStep++;
+      if (historyStep < history.length) {
+        history.length = historyStep; // 戻った後に新しく描いたら先の履歴を消す
+      }
+      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      if (history.length > MAX_HISTORY) {
+        history.shift();
+        historyStep--;
+      }
+      updateButtons();
+    }
+
+    // 履歴からキャンバスを復元
+    function restoreState(step) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.putImageData(history[step], 0, 0);
+      updateButtons();
+    }
+
+    // 戻れない・進めない時はボタンを薄くして無効化
+    function updateButtons() {
+      undoBtn.disabled = historyStep <= 0;
+      redoBtn.disabled = historyStep >= history.length - 1;
+    }
+
+    // 初期状態（真っ白なキャンバス）を0番目として保存
+    saveState();
+
     let isDrawing = false;
 
-    // 描画開始（Apple Pencil・指・マウス共通）
     canvas.addEventListener('pointerdown', (e) => {
-      // Apple Pencilのみにしたい場合は下の1行のコメントを外す
+      // Apple Pencilのみにする場合は下の1行のコメントを外す
       // if (e.pointerType !== 'pen') return;
       isDrawing = true;
       ctx.beginPath();
       ctx.moveTo(e.clientX, e.clientY);
     });
 
-    // 描画中
     canvas.addEventListener('pointermove', (e) => {
       if (!isDrawing) return;
       ctx.lineTo(e.clientX, e.clientY);
       ctx.stroke();
     });
 
-    // 描画終了
-    const stopDrawing = () => { isDrawing = false; };
+    const stopDrawing = () => {
+      if (!isDrawing) return;
+      isDrawing = false;
+      saveState(); // 1画描き終わるたびに履歴を保存
+    };
     canvas.addEventListener('pointerup', stopDrawing);
     canvas.addEventListener('pointercancel', stopDrawing);
 
-    // 全消去ボタン
-    clearBtn.addEventListener('click', () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 戻るボタン
+    undoBtn.addEventListener('click', () => {
+      if (historyStep > 0) {
+        historyStep--;
+        restoreState(historyStep);
+      }
     });
 
-    // オフライン対応用 Service Worker の登録
+    // 進むボタン
+    redoBtn.addEventListener('click', () => {
+      if (historyStep < history.length - 1) {
+        historyStep++;
+        restoreState(historyStep);
+      }
+    });
+
+    // 全消去ボタン（消去も1手として履歴に残すので、間違えて消しても「戻る」で復活可能）
+    clearBtn.addEventListener('click', () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      saveState();
+    });
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js');
     }
