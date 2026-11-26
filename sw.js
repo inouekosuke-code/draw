@@ -1,4 +1,4 @@
-const CACHE_NAME = 'simple-draw-v1';
+const CACHE_NAME = 'simple-draw-v2';
 const ASSETS = [
   './',
   './index.html',
