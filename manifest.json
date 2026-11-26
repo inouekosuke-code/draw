@@ -1,0 +1,8 @@
+{
+  "name": "シンプルお絵かき",
+  "short_name": "お絵かき",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff"
+}
