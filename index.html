@@ -3,68 +3,119 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>シンプルお絵かき</title>
+  <title>シンプルお絵かき (1920×1080)</title>
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body, html {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background-color: #ffffff;
+      background-color: #2c2c2e; /* キャンバス外側の背景色（ダークグレー） */
       touch-action: none;
-    }
-    canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-    }
-    .toolbar {
-      position: fixed;
-      top: 20px;
-      right: 20px;
       display: flex;
-      gap: 10px;
+      flex-direction: column;
     }
+
+    /* キャンバスの外側上部に配置するツールバー */
+    .toolbar {
+      width: 100%;
+      height: 64px;
+      padding: 0 20px;
+      background-color: #1c1c1e;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      border-bottom: 1px solid #3a3a3c;
+    }
+
+    .canvas-info {
+      color: #aeaeb2;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 13px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 12px;
+    }
+
     .tool-btn {
-      width: 48px;
-      height: 48px;
+      width: 44px;
+      height: 44px;
       border-radius: 50%;
-      border: 1px solid #ddd;
-      background: rgba(245, 245, 245, 0.85);
-      backdrop-filter: blur(8px);
-      font-size: 20px;
+      border: 1px solid #48484a;
+      background-color: #2c2c2e;
+      font-size: 18px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #333;
+      color: #ffffff;
       user-select: none;
       -webkit-user-select: none;
+    }
+    .tool-btn:active:not(:disabled) {
+      background-color: #48484a;
     }
     .tool-btn:disabled {
       opacity: 0.3;
       cursor: default;
     }
+
+    /* 1920×1080キャンバスを中央に収めるエリア */
+    .workspace {
+      flex: 1;
+      width: 100%;
+      height: calc(100% - 64px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    canvas {
+      background-color: #ffffff;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      display: block;
+      /* 表示サイズはJS側で画面に収まる最大サイズ（16:9維持）に自動計算 */
+    }
   </style>
 </head>
 <body>
-  <canvas id="canvas"></canvas>
-  
+
+  <!-- 1920×1080の外側（上部）に配置されたボタンバー -->
   <div class="toolbar">
-    <button id="undoBtn" class="tool-btn" aria-label="戻る" disabled>↩</button>
-    <button id="redoBtn" class="tool-btn" aria-label="進む" disabled>↪</button>
-    <button id="clearBtn" class="tool-btn" aria-label="全消去">🗑️</button>
+    <span class="canvas-info">1920 × 1080</span>
+    <div class="btn-group">
+      <button id="undoBtn" class="tool-btn" aria-label="戻る" disabled>↩</button>
+      <button id="redoBtn" class="tool-btn" aria-label="進む" disabled>↪</button>
+      <button id="clearBtn" class="tool-btn" aria-label="全消去">🗑️</button>
+    </div>
+  </div>
+
+  <!-- キャンバス配置エリア -->
+  <div class="workspace" id="workspace">
+    <canvas id="canvas" width="1920" height="1080"></canvas>
   </div>
 
   <script>
     const canvas = document.getElementById('canvas');
+    const workspace = document.getElementById('workspace');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const undoBtn = document.getElementById('undoBtn');
     const redoBtn = document.getElementById('redoBtn');
     const clearBtn = document.getElementById('clearBtn');
+
+    // 内部解像度は常に1920×1080で固定
+    const CANVAS_WIDTH = 1920;
+    const CANVAS_HEIGHT = 1080;
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
 
     // 履歴管理用の配列（最大30手前まで保存）
     let history = [];
@@ -73,33 +124,43 @@
 
     function setPenStyle() {
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 10; // ← ペンの太さを変える場合はここを変更
+      ctx.lineWidth = 6; // 1920×1080基準でのペンの太さ（必要に応じて変更）
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
     }
+    setPenStyle();
 
-    function resizeCanvas() {
-      // リサイズ前に現在の絵を一時保存
-      const tempImage = canvas.width > 0 ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      ctx.scale(dpr, dpr);
-      setPenStyle();
-      if (tempImage) {
-        ctx.putImageData(tempImage, 0, 0);
-      }
+    // iPadの画面サイズに合わせて1920×1080の見た目の表示サイズだけをフィットさせる
+    function fitCanvasToScreen() {
+      const padding = 32; // 上下左右の余白合計
+      const availWidth = workspace.clientWidth - padding;
+      const availHeight = workspace.clientHeight - padding;
+
+      const scale = Math.min(availWidth / CANVAS_WIDTH, availHeight / CANVAS_HEIGHT);
+      canvas.style.width = `${Math.floor(CANVAS_WIDTH * scale)}px`;
+      canvas.style.height = `${Math.floor(CANVAS_HEIGHT * scale)}px`;
     }
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    fitCanvasToScreen();
+    window.addEventListener('resize', fitCanvasToScreen);
+
+    // 画面上のタッチ位置を1920×1080の正確な座標に変換する関数
+    function getCanvasCoordinates(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = CANVAS_WIDTH / rect.width;
+      const scaleY = CANVAS_HEIGHT / rect.height;
+      return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+      };
+    }
 
     // 現在のキャンバス状態を履歴に保存
     function saveState() {
       historyStep++;
       if (historyStep < history.length) {
-        history.length = historyStep; // 戻った後に新しく描いたら先の履歴を消す
+        history.length = historyStep;
       }
-      history.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      history.push(ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT));
       if (history.length > MAX_HISTORY) {
         history.shift();
         historyStep--;
@@ -109,18 +170,17 @@
 
     // 履歴からキャンバスを復元
     function restoreState(step) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       ctx.putImageData(history[step], 0, 0);
       updateButtons();
     }
 
-    // 戻れない・進めない時はボタンを薄くして無効化
     function updateButtons() {
       undoBtn.disabled = historyStep <= 0;
       redoBtn.disabled = historyStep >= history.length - 1;
     }
 
-    // 初期状態（真っ白なキャンバス）を0番目として保存
+    // 初期状態を保存
     saveState();
 
     let isDrawing = false;
@@ -129,20 +189,22 @@
       // Apple Pencilのみにする場合は下の1行のコメントを外す
       // if (e.pointerType !== 'pen') return;
       isDrawing = true;
+      const pos = getCanvasCoordinates(e);
       ctx.beginPath();
-      ctx.moveTo(e.clientX, e.clientY);
+      ctx.moveTo(pos.x, pos.y);
     });
 
     canvas.addEventListener('pointermove', (e) => {
       if (!isDrawing) return;
-      ctx.lineTo(e.clientX, e.clientY);
+      const pos = getCanvasCoordinates(e);
+      ctx.lineTo(pos.x, pos.y);
       ctx.stroke();
     });
 
     const stopDrawing = () => {
       if (!isDrawing) return;
       isDrawing = false;
-      saveState(); // 1画描き終わるたびに履歴を保存
+      saveState();
     };
     canvas.addEventListener('pointerup', stopDrawing);
     canvas.addEventListener('pointercancel', stopDrawing);
@@ -163,9 +225,9 @@
       }
     });
 
-    // 全消去ボタン（消去も1手として履歴に残すので、間違えて消しても「戻る」で復活可能）
+    // 全消去ボタン
     clearBtn.addEventListener('click', () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       saveState();
     });
 
